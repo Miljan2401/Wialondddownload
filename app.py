@@ -17,7 +17,7 @@ SMTP_USER   = st.secrets.get("SMTP_USER")
 SMTP_PASS   = st.secrets.get("SMTP_PASS")
 RECIPS      = st.secrets.get("RECIPIENTS")
 
-# Fallback – omogući ručni unos ako nema secrets (npr. lokalni test)
+# Fallback – ručni unos ako nema secrets
 if not TOKEN:
     st.sidebar.warning("⚠️  Nema TOKEN u secrets-ima.")
     TOKEN = st.sidebar.text_input("Wialon token", type="password")
@@ -26,18 +26,17 @@ if not SMTP_USER:
     st.sidebar.warning("⚠️  Nema SMTP postavki u secrets-ima.")
 
 # ----- Wialon helpers ------------------------------------------------------
-@st.cache_data(ttl=3600, show_spinner=False)      # 1 h
+@st.cache_data(ttl=3600, show_spinner=False)
 def login():
     r = requests.get(BASE_URL,
         params={"svc":"token/login",
                 "params":json.dumps({"token":TOKEN})})
     j = r.json()
     if "error" in j:
-        st.error(f"Login error: {j}")
-        st.stop()
+        st.error(f"Login error: {j}"); st.stop()
     return j["eid"]
 
-@st.cache_data(ttl=900, show_spinner=False)       # 15 min
+@st.cache_data(ttl=900, show_spinner=False)
 def get_vehicles(sid):
     r = requests.post(BASE_URL,
         data={"svc":"core/search_items",
@@ -49,9 +48,8 @@ def get_vehicles(sid):
     j = r.json()
     if "error" in j:
         st.error(j); st.stop()
-    return [{"id":it["id"],
-             "name":it.get("nm","Unknown"),
-             "reg": it.get("prp",{}).get("reg_number","")} for it in j["items"]]
+    return [{"id":it["id"], "name":it.get("nm","Unknown"),
+             "reg":it.get("prp",{}).get("reg_number","")} for it in j["items"]]
 
 def list_files(sid, vid, target:date):
     r = requests.post(BASE_URL,
@@ -83,14 +81,17 @@ st.set_page_config("Wialon DDD Manager", layout="wide")
 sid = login()
 vehicles = get_vehicles(sid)
 
-# ----- SIDEBAR (vozilo + datum) -------------------------------------------
+# ----- SIDEBAR -------------------------------------------------------------
 st.sidebar.header("Vozila")
 
 search = st.sidebar.text_input("Pretraga")
+
+# ——  datum je SADA odmah ispod pretrage ——————————
+pick_date = st.sidebar.date_input("Datum", value=date.today())
+
 filtered = [v for v in vehicles if search.lower() in (v["reg"]+v["name"]).lower()]
 if not filtered:
-    st.sidebar.info("Nema rezultata.")
-    st.stop()
+    st.sidebar.info("Nema rezultata."); st.stop()
 
 choice = st.sidebar.radio(
     "Izaberi vozilo",
@@ -98,7 +99,6 @@ choice = st.sidebar.radio(
     format_func=lambda v: f'{v["reg"]} — {v["name"]}',
     index=0
 )
-pick_date = st.sidebar.date_input("Datum", value=date.today())
 
 # ----- LISTA FAJLOVA -------------------------------------------------------
 vid = choice["id"]
@@ -107,10 +107,9 @@ st.subheader(f"Fajlovi za **{choice['reg']}** – {pick_date.strftime('%d.%m.%Y'
              f"({len(files)})")
 
 if not files:
-    st.info("Nema fajlova za taj datum.")
-    st.stop()
+    st.info("Nema fajlova za taj datum."); st.stop()
 
-# -- Checkboxes (per-file) --------------------------------------------------
+# -- Checkboxes -------------------------------------------------------------
 if "checked" not in st.session_state:
     st.session_state.checked = {}
 
@@ -128,8 +127,7 @@ c1, c2 = st.columns(2)
 
 with c1:
     st.markdown("### 📥 Download")
-    disabled = len(selected)==0
-    if st.button("Preuzmi ZIP", disabled=disabled):
+    if st.button("Preuzmi ZIP", disabled=not selected):
         mem = io.BytesIO()
         with zipfile.ZipFile(mem, "w") as zf:
             for fn in selected:
@@ -142,7 +140,7 @@ with c1:
 
 with c2:
     st.markdown("### ✉️  Pošalji mail")
-    if st.button("Pošalji", disabled=disabled or not SMTP_USER):
+    if st.button("Pošalji", disabled=not selected or not SMTP_USER):
         try:
             buf = io.BytesIO()
             with zipfile.ZipFile(buf,"w") as zf:
