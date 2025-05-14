@@ -5,6 +5,9 @@ from email.message import EmailMessage
 from datetime import datetime, date
 from dateutil import tz
 import streamlit as st
+print("DEBUG – keys u st.secrets:", list(st.secrets.keys()), flush=True)
+print("DEBUG – st.secrets content:", st.secrets.to_dict(), flush=True)
+
 
 UTC = tz.tzutc()
 DATE_RE = re.compile(r"20\d{6}")          # YYYYMMDD u imenu fajla
