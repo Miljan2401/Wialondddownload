@@ -1,4 +1,4 @@
-# app.py – Wialon DDD Manager  (SID-only, admin gore desno)  – 2025-05-15
+# app.py – Wialon DDD Manager  (SID-only, strogi creatorId filter)   2025-05-15
 import io, json, zipfile, re, smtplib, base64, requests
 from email.message import EmailMessage
 from datetime import datetime, date
@@ -10,10 +10,10 @@ import streamlit as st
 
 # ───────── META
 st.set_page_config(page_title="Wialon DDD Manager", layout="wide")
-UTC, DATE_RE = tz.tzutc(), re.compile(r"20\\d{6}")
+UTC, DATE_RE = tz.tzutc(), re.compile(r"20\d{6}")
 DATA_FILE = Path("users.json")
 
-# ───────── URL iz Wialon-a
+# ───────── URL (dolazi iz Wialon-a)
 q          = st.query_params
 SID        = q.get("sid")
 BASE_URL   = unquote(q.get("baseUrl", "https://hst-api.wialon.com"))
@@ -21,7 +21,7 @@ USER_NAME  = q.get("user", "")
 ADMIN_FLAG = q.get("admin")            # ?admin=PIN
 API_PATH   = f"{BASE_URL.rstrip('/')}/wialon/ajax.html"
 if not SID:
-    st.stop("Pokreni iz Wialon-a – nedostaje sid=")
+    st.stop("Pokreni iz Wialon-a – nedostaje sid=…")
 
 # ───────── secrets
 SMTP_SERVER = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
@@ -45,60 +45,62 @@ def push_to_github(txt: str):
     hdr = {"Authorization": f"token {GITHUB_PAT}"}
     url = f"https://api.github.com/repos/{REPO}/contents/users.json"
     sha = None
-    r0  = requests.get(url, headers=hdr, params={"ref": BRANCH})
-    if r0.status_code == 200: sha = r0.json()["sha"]
+    r0 = requests.get(url, headers=hdr, params={"ref": BRANCH})
+    if r0.status_code == 200:
+        sha = r0.json()["sha"]
     payload = {"message": "update users.json via admin",
                "content": b64encode(txt.encode()).decode(),
                "branch": BRANCH}
     if sha: payload["sha"] = sha
     r = requests.put(url, headers=hdr, json=payload)
-    if r.ok: st.toast("users.json push-ovan ✅")
-    else:    st.error(f"GitHub push nije prošao: {r.status_code}")
+    if r.ok:
+        st.toast("users.json push-ovan ✅")
+    else:
+        st.error(f"GitHub push nije prošao: {r.status_code}")
 
 def save_db(db: dict):
     txt = json.dumps(db, indent=2)
     DATA_FILE.write_text(txt)
     push_to_github(txt)
 
-# ───────── helper: current userId
-def get_uid(name:str)->int|None:
-    p={"svc":"core/search_items","params":json.dumps({
-        "spec":{"itemsType":"avl_user","propName":"sys_name",
-                "propValueMask":name,"sortType":"sys_name"},
-        "force":1,"flags":1,"from":0,"to":0}),"sid":SID}
-    js=requests.post(API_PATH,data=p,timeout=8).json()
-    return js["items"][0]["id"] if isinstance(js,dict) and js.get("items") else None
-MY_UID=get_uid(USER_NAME)
+# ───────── helper: userId
+def get_uid(name: str) -> int | None:
+    p = {"svc":"core/search_items","params":json.dumps({
+            "spec":{"itemsType":"avl_user","propName":"sys_name",
+                    "propValueMask":name,"sortType":"sys_name"},
+            "force":1,"flags":1,"from":0,"to":0}),
+         "sid":SID}
+    j = requests.post(API_PATH,data=p,timeout=8).json()
+    return j["items"][0]["id"] if isinstance(j,dict) and j.get("items") else None
+MY_UID = get_uid(USER_NAME)
 
-# ───────── units (creatorId filter + fallback)
+# ───────── Units – strogo creatorId
 @st.cache_data(ttl=600)
 def get_units():
-    def q(spec):
-        r=requests.post(API_PATH,data={"svc":"core/search_items",
-            "params":json.dumps({"spec":spec,"force":1,"flags":1,"from":0,"to":0}),
-            "sid":SID},timeout=12).json()
-        return r["items"] if isinstance(r,dict) else r
-    units=q({"itemsType":"avl_unit","propName":"creatorId",
-             "propValueMask":str(MY_UID),"sortType":"sys_name"})
-    if not units:
-        units=q({"itemsType":"avl_unit","propName":"sys_name",
-                 "propValueMask":"*","sortType":"sys_name"})
+    p = {"svc":"core/search_items","params":json.dumps({
+            "spec":{"itemsType":"avl_unit","propName":"creatorId",
+                    "propValueMask":str(MY_UID),"sortType":"sys_name"},
+            "force":1,"flags":1,"from":0,"to":0}),
+         "sid":SID}
+    r = requests.post(API_PATH,data=p,timeout=12).json()
+    items = r["items"] if isinstance(r,dict) else r
     return [{"id":u["id"],"name":u.get("nm","Unknown"),
-             "reg":u.get("prp",{}).get("reg_number","")} for u in units]
+             "reg":u.get("prp",{}).get("reg_number","")} for u in items]
 
 def list_files(vid:int,target:date):
     p={"svc":"file/list","params":json.dumps({
         "itemId":vid,"storageType":2,"path":"tachograph/",
-        "mask":"*","recursive":False,"fullPath":False}),"sid":SID}
-    d=requests.post(API_PATH,data=p,timeout=12).json()
-    if isinstance(d,dict) and d.get("error"):
-        return [] if d["error"]==4 else st.error(f"Wialon error {d['error']}")
+        "mask":"*","recursive":False,"fullPath":False}),
+        "sid":SID}
+    data = requests.post(API_PATH,data=p,timeout=12).json()
+    if isinstance(data,dict) and data.get("error"):
+        return [] if data["error"]==4 else st.error(f"Wialon error {data['error']}")
     out=[]
-    for f in d:
+    for f in data:
         ct=datetime.fromtimestamp(f.get("ct",0),UTC).date()
         mt=datetime.fromtimestamp(f.get("mt",0),UTC).date()
         if ct==target or mt==target: out.append(f); continue
-        m=re.search(r"20\\d{6}",f["n"])
+        m=DATE_RE.search(f["n"])
         if m and datetime.strptime(m.group(),"%Y%m%d").date()==target: out.append(f)
     return sorted(out,key=lambda x:x.get("mt",x.get("ct",0)),reverse=True)
 
@@ -108,7 +110,7 @@ def fetch_file(vid:int,n:str):
             "itemId":vid,"storageType":2,"path":f"tachograph/{n}"}),
         "sid":SID},timeout=30).content
 
-# ───────── učitaj cfg i normalizuj recips
+# ───────── cfg
 db=load_db()
 user_cfg=db.get(str(MY_UID),{"token":"","recipients":"","enabled":False})
 user_cfg["recipients"]=str(user_cfg.get("recipients") or "")
@@ -117,23 +119,23 @@ user_cfg["recipients"]=str(user_cfg.get("recipients") or "")
 if "admin_ok" not in st.session_state: st.session_state.admin_ok=False
 if ADMIN_FLAG==ADMIN_PIN: st.session_state.admin_ok=True
 
-# ───────── header: admin panel desno
+# ───────── header / admin desno
 _, admin = st.columns([3,1])
 with admin:
     if not st.session_state.admin_ok:
-        pin=st.text_input("Admin PIN",type="password",label_visibility="collapsed")
-        if pin==ADMIN_PIN:
-            st.session_state.admin_ok=True
-            st.experimental_rerun()
+        pin=st.text_input("Admin PIN", type="password", label_visibility="collapsed")
+        if pin == ADMIN_PIN:
+            st.session_state.admin_ok = True
+            st.rerun()                       # nova funkcija
     else:
         st.markdown("### ⚙️ Admin")
         token_val = st.text_input("Token", value=user_cfg["token"], type="password")
         recip_val = st.text_area("Primaoci", value=user_cfg["recipients"], height=60)
         enabled   = st.checkbox("Enabled", value=user_cfg["enabled"])
         if st.button("💾 Snimi"):
-            db[str(MY_UID)]={"token":token_val.strip(),
-                             "recipients":recip_val.strip(),
-                             "enabled":enabled}
+            db[str(MY_UID)] = {"token": token_val.strip(),
+                               "recipients": recip_val.strip(),
+                               "enabled": enabled}
             save_db(db); st.success("Snimljeno!")
 
 # ───────── sidebar
@@ -144,9 +146,12 @@ st.sidebar.write("**Automatika:** "+
 st.sidebar.markdown("**Primaoci:**")
 st.sidebar.code(user_cfg["recipients"] or "—")
 
-units=get_units()
-search=st.sidebar.text_input("Pretraga")
-pick  = st.sidebar.date_input("Datum", date.today())
+units = get_units()
+if not units:
+    st.stop("Ovaj nalog nema vozila za koja je creatorId upravo ovaj korisnik.")
+
+search = st.sidebar.text_input("Pretraga")
+pick   = st.sidebar.date_input("Datum", date.today())
 
 flt=[u for u in units if search.lower() in (u["reg"]+u["name"]).lower()]
 if not flt: st.sidebar.info("Nema rezultata."); st.stop()
