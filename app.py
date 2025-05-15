@@ -1,4 +1,4 @@
-# app.py – Wialon DDD Manager  (SID-only, creatorId → fallback)  – 2025-05-15
+# app.py – Wialon DDD Manager  (SID-only, creatorId→fallback) – 2025-05-15
 import io, json, zipfile, re, smtplib, base64, requests
 from email.message import EmailMessage
 from datetime import datetime, date
@@ -71,7 +71,7 @@ def get_units():
 
     items = query({"itemsType":"avl_unit","propName":"creatorId",
                    "propValueMask":str(MY_UID),"sortType":"sys_name"})
-    if not items:  # fallback na sve vidljive
+    if not items:  # fallback
         items = query({"itemsType":"avl_unit","propName":"sys_name",
                        "propValueMask":"*","sortType":"sys_name"})
 
@@ -89,9 +89,11 @@ def list_files(vid:int,target:date):
     for f in d:
         ct=datetime.fromtimestamp(f.get("ct",0),UTC).date()
         mt=datetime.fromtimestamp(f.get("mt",0),UTC).date()
-        if ct==target or mt==target: out.append(f); continue
+        if ct==target or mt==target:
+            out.append(f); continue
         m=DATE_RE.search(f["n"])
-        if m and datetime.strptime(m.group(),"%Y%m%d").date()==target: out.append(f)
+        if m and datetime.strptime(m.group(),"%Y%m%d").date()==target:
+            out.append(f)
     return sorted(out,key=lambda x:x.get("mt",x.get("ct",0)),reverse=True)
 
 def fetch_file(vid:int,n:str):
@@ -167,7 +169,8 @@ with l:
     if st.button("Preuzmi ZIP",disabled=not sel):
         mem=io.BytesIO()
         with zipfile.ZipFile(mem,"w") as zf:
-            for fn in sel: zf.writestr(fn, fetch_file(vid,fn))
+            for fn in sel:
+                zf.writestr(fn, fetch_file(vid,fn))
         st.download_button("Preuzmi", mem.getvalue(), "application/zip",
                            f"{choice['reg']}_{pick}.zip", use_container_width=True)
 
@@ -176,4 +179,14 @@ with r:
     if st.button("Pošalji",disabled=not(sel and user_cfg["recipients"])):
         buf=io.BytesIO()
         with zipfile.ZipFile(buf,"w") as zf:
-            for fn in sel
+            for fn in sel:
+                zf.writestr(fn, fetch_file(vid,fn))
+        msg=EmailMessage()
+        msg["Subject"]=f"DDD {choice['reg']} {pick:%d-%m-%Y}"
+        msg["From"]=SMTP_USER; msg["To"]=user_cfg["recipients"]
+        msg.set_content("Export iz Streamlit aplikacije")
+        msg.add_attachment(buf.getvalue(),maintype="application",subtype="zip",
+                           filename=f"{choice['reg']}_{pick}.zip")
+        with smtplib.SMTP(SMTP_SERVER,SMTP_PORT) as s:
+            s.starttls(); s.login(SMTP_USER,SMTP_PASS); s.send_message(msg)
+        st.success("Poslato!")
