@@ -1,0 +1,39 @@
+name: Auto DDD sender  •  svaki dan u 02 : 05 (po Srbiji)
+
+on:
+  schedule:
+    # GitHub Actions radi u UTC-u, pa dodajemo DVA reda:
+    # 00:05 UTC = 02:05 CEST (letnje računanje)
+    - cron: '5 0 * * *'
+    # 01:05 UTC = 02:05 CET  (zimsko računanje)
+    - cron: '5 1 * * *'
+  workflow_dispatch:      # da možeš ručno da pokreneš iz Actions taba
+
+jobs:
+  send-ddd:
+    if: ${{ secrets.AUTO_ON == 'true' }}   # radi samo kad je toggle upaljen
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Send yesterday’s DDD ZIPs
+        run: python auto_sender.py
+        env:
+          TOKEN:        ${{ secrets.TOKEN }}
+          SMTP_SERVER:  ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT:    ${{ secrets.SMTP_PORT }}
+          SMTP_USER:    ${{ secrets.SMTP_USER }}
+          SMTP_PASS:    ${{ secrets.SMTP_PASS }}
+          RECIPIENTS:   ${{ secrets.RECIPIENTS }}
