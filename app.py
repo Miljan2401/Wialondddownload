@@ -1,4 +1,4 @@
-# app.py – Wialon DDD Manager  (SID-only, strogi creatorId)   2025-05-15
+# app.py – Wialon DDD Manager  (SID-only, creatorId → fallback)  – 2025-05-15
 import io, json, zipfile, re, smtplib, base64, requests
 from email.message import EmailMessage
 from datetime import datetime, date
@@ -14,7 +14,7 @@ UTC, DATE_RE = tz.tzutc(), re.compile(r"20\d{6}")
 DATA_FILE = Path("users.json")
 
 # ───────── URL
-q = st.query_params
+q          = st.query_params
 SID        = q.get("sid")
 BASE_URL   = unquote(q.get("baseUrl", "https://hst-api.wialon.com"))
 USER_NAME  = q.get("user", "")
@@ -38,15 +38,15 @@ def load_db(): return json.loads(DATA_FILE.read_text()) if DATA_FILE.exists() el
 def push_to_github(txt:str):
     if not (GITHUB_PAT and REPO):
         st.warning("⚠️ Snimljeno lokalno (nema PAT/REPO)."); return
-    hdr = {"Authorization":f"token {GITHUB_PAT}"}
-    url = f"https://api.github.com/repos/{REPO}/contents/users.json"
-    sha = requests.get(url, headers=hdr, params={"ref":BRANCH})
-    sha = sha.json()["sha"] if sha.status_code==200 else None
+    hdr={"Authorization":f"token {GITHUB_PAT}"}
+    url=f"https://api.github.com/repos/{REPO}/contents/users.json"
+    sha_resp=requests.get(url, headers=hdr, params={"ref":BRANCH})
+    sha = sha_resp.json()["sha"] if sha_resp.status_code==200 else None
     payload={"message":"update users.json via admin",
              "content":b64encode(txt.encode()).decode(),"branch":BRANCH}
     if sha: payload["sha"]=sha
     r=requests.put(url, headers=hdr, json=payload)
-    st.toast("users.json push-ovan ✅") if r.ok else st.error(f"GitHub push nije prošao: {r.status_code}")
+    st.toast("users.json push-ovan ✅") if r.ok else st.error(f"GitHub push error {r.status_code}")
 def save_db(db): txt=json.dumps(db,indent=2); DATA_FILE.write_text(txt); push_to_github(txt)
 
 # ───────── helper: userId
@@ -59,17 +59,24 @@ def get_uid(name:str)->int|None:
     return j["items"][0]["id"] if isinstance(j,dict) and j.get("items") else None
 MY_UID=get_uid(USER_NAME)
 
-# ───────── Units
+# ───────── Units with fallback
 @st.cache_data(ttl=600)
 def get_units():
-    p={"svc":"core/search_items","params":json.dumps({
-        "spec":{"itemsType":"avl_unit","propName":"creatorId",
-                "propValueMask":str(MY_UID),"sortType":"sys_name"},
-        "force":1,"flags":1,"from":0,"to":0}),"sid":SID}
-    r=requests.post(API_PATH,data=p,timeout=12).json()
-    it=r["items"] if isinstance(r,dict) else r
+    def query(spec):
+        resp = requests.post(API_PATH, data={
+            "svc":"core/search_items",
+            "params":json.dumps({"spec":spec,"force":1,"flags":1,"from":0,"to":0}),
+            "sid":SID}, timeout=12).json()
+        return resp["items"] if isinstance(resp,dict) else resp
+
+    items = query({"itemsType":"avl_unit","propName":"creatorId",
+                   "propValueMask":str(MY_UID),"sortType":"sys_name"})
+    if not items:  # fallback na sve vidljive
+        items = query({"itemsType":"avl_unit","propName":"sys_name",
+                       "propValueMask":"*","sortType":"sys_name"})
+
     return [{"id":u["id"],"name":u.get("nm","Unknown"),
-             "reg":u.get("prp",{}).get("reg_number","")} for u in it]
+             "reg":u.get("prp",{}).get("reg_number","")} for u in items]
 
 def list_files(vid:int,target:date):
     p={"svc":"file/list","params":json.dumps({
@@ -106,9 +113,9 @@ if ADMIN_FLAG==ADMIN_PIN: st.session_state.admin_ok=True
 _, admin = st.columns([3,1])
 with admin:
     if not st.session_state.admin_ok:
-        pin = st.text_input("Admin PIN", type="password", label_visibility="collapsed")
-        if pin == ADMIN_PIN:
-            st.session_state.admin_ok = True
+        pin=st.text_input("Admin PIN", type="password", label_visibility="collapsed")
+        if pin==ADMIN_PIN:
+            st.session_state.admin_ok=True
             st.rerun()
     else:
         st.markdown("### ⚙️ Admin")
@@ -116,9 +123,9 @@ with admin:
         recip_val = st.text_area("Primaoci", value=user_cfg["recipients"], height=60)
         enabled   = st.checkbox("Enabled", value=user_cfg["enabled"])
         if st.button("💾 Snimi"):
-            db[str(MY_UID)] = {"token": token_val.strip(),
-                               "recipients": recip_val.strip(),
-                               "enabled": enabled}
+            db[str(MY_UID)]={"token":token_val.strip(),
+                             "recipients":recip_val.strip(),
+                             "enabled":enabled}
             save_db(db); st.success("Snimljeno!")
 
 # ───────── sidebar
@@ -131,23 +138,21 @@ st.sidebar.code(user_cfg["recipients"] or "—")
 
 units=get_units()
 if not units:
-    st.sidebar.warning("Nijedno vozilo nije pronađeno za ovaj nalog.")
+    st.sidebar.warning("Nijedno vozilo nije pronađeno.")
     st.stop()
 
 search=st.sidebar.text_input("Pretraga")
 pick  = st.sidebar.date_input("Datum", date.today())
 
 flt=[u for u in units if search.lower() in (u["reg"]+u["name"]).lower()]
-if not flt:
-    st.sidebar.info("Nema rezultata."); st.stop()
+if not flt: st.sidebar.info("Nema rezultata."); st.stop()
 
 choice=st.sidebar.radio("Vozilo", flt,
         format_func=lambda v:f"{v['reg']} — {v['name']}")
 vid=choice["id"]; files=list_files(vid,pick)
 
 st.subheader(f"{choice['reg']} – {pick:%d.%m.%Y} ({len(files)})")
-if not files:
-    st.info("Nema fajlova."); st.stop()
+if not files: st.info("Nema fajlova."); st.stop()
 
 if "checked" not in st.session_state: st.session_state.checked={}
 cols=st.columns(3)
@@ -171,15 +176,4 @@ with r:
     if st.button("Pošalji",disabled=not(sel and user_cfg["recipients"])):
         buf=io.BytesIO()
         with zipfile.ZipFile(buf,"w") as zf:
-            for fn in sel: zf.writestr(fn, fetch_file(vid,fn))
-        msg=EmailMessage()
-        msg["Subject"]=f"DDD {choice['reg']} {pick:%d-%m-%Y}"
-        msg["From"]=SMTP_USER; msg["To"]=user_cfg["recipients"]
-        msg.set_content("Export iz Streamlit aplikacije")
-        msg.add_attachment(buf.getvalue(),maintype="application",subtype="zip",
-                           filename=f"{choice['reg']}_{pick}.zip")
-        with zipfile.ZipFile(buf,"w") as zf:
-            pass  # prevent 'zf' undefined
-        with smtplib.SMTP(SMTP_SERVER,SMTP_PORT) as s:
-            s.starttls(); s.login(SMTP_USER,SMTP_PASS); s.send_message(msg)
-        st.success("Poslato!")
+            for fn in sel
