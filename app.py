@@ -54,6 +54,11 @@ REPO        = st.secrets.get("GITHUB_REPO")   # option
 # ────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=900)
 def get_vehicles():
+    """Vrati listu vozila za prosleđeni SID.
+    Wialon `core/search_items` može vratiti:
+      • dict sa ključevima `items`, `totalItems`, … (normalan slučaj)
+      • dict sa `error` (kod greške)
+    """
     payload = {
         "svc": "core/search_items",
         "params": json.dumps({
@@ -71,9 +76,26 @@ def get_vehicles():
         "sid": SID,
     }
     res = requests.post(API_PATH, data=payload, timeout=15).json()
+
+    # Error handling
     if isinstance(res, dict) and res.get("error"):
-        st.error(f"Wialon error {res['error']}"); st.stop()
+        st.error(f"Wialon error {res['error']}")
+        st.stop()
+
+    # Normalan odgovor sa "items"
+    items = res["items"] if isinstance(res, dict) else res
+
     return [
+        {
+            "id": itm.get("id"),
+            "name": itm.get("nm", "Unknown"),
+            "reg": itm.get("prp", {}).get("reg_number", ""),
+        }
+        for itm in items
+    ]
+
+# ────────────────────────────────────────────────────────────────────────────
+
         {
             "id": it["id"],
             "name": it.get("nm", "Unknown"),
