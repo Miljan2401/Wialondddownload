@@ -1,0 +1,30 @@
+name: Nightly DDD
+on:
+  schedule: [ {cron: '5 0 * * *'} ]
+jobs:
+  fanout:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: matrix
+        run: |
+          echo "users=$(jq -c '[to_entries[] | select(.value.enabled==true)]' users.json)" >> $GITHUB_OUTPUT
+  send:
+    needs: fanout
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.fanout.outputs.users) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - run: pip install requests python-dateutil
+      - run: python auto_sender.py
+        env:
+          TOKEN:        ${{ matrix.value.token }}
+          RECIPIENTS:   ${{ matrix.value.recipients }}
+          BASE_URL:     https://hst-api.wialon.com
+          SMTP_SERVER:  ${{ secrets.SMTP_SERVER }}
+          SMTP_PORT:    ${{ secrets.SMTP_PORT }}
+          SMTP_USER:    ${{ secrets.SMTP_USER }}
+          SMTP_PASS:    ${{ secrets.SMTP_PASS }}
