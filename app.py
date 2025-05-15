@@ -7,41 +7,58 @@ from urllib.parse import unquote
 from dateutil import tz
 import streamlit as st
 
-# ─────────────────────────────────────────────
-#  Page config
-# ─────────────────────────────────────────────
+# ─────────────────────────  Page config
 st.set_page_config(page_title="Wialon DDD Manager", layout="wide")
-UTC      = tz.tzutc()
-DATE_RE  = re.compile(r"20\d{6}")           # YYYYMMDD u nazivu fajla
+UTC = tz.tzutc()
+DATE_RE = re.compile(r"20\d{6}")                       # YYYYMMDD u imenu fajla
 
-# ─────────────────────────────────────────────
-#  Query-parametri (mora sid + baseUrl)
-# ─────────────────────────────────────────────
-q          = st.query_params
-SID        = q.get("sid")
-BASE_URL   = unquote(q.get("baseUrl", "https://hst-api.wialon.com"))
-USER_NAME  = q.get("user", "")
-API_PATH   = f"{BASE_URL.rstrip('/')}/wialon/ajax.html"
+# ─────────────────────────  Parametri iz URL-a
+q           = st.query_params
+SID         = q.get("sid")
+BASE_URL    = unquote(q.get("baseUrl", "https://hst-api.wialon.com"))
+USER_NAME   = q.get("user", "")
+API_PATH    = f"{BASE_URL.rstrip('/')}/wialon/ajax.html"
 
 if not SID:
-    st.error("Pokreni aplikaciju iz Wialon-a (URL mora imati sid).")
+    st.error("Pokreni aplikaciju iz Wialon-a (URL mora imati sid=...).")
     st.stop()
 
-# ─────────────────────────────────────────────
-#  SMTP i (opciono) GitHub toggle
-# ─────────────────────────────────────────────
+# ─────────────────────────  SMTP & (opciono) GitHub toggle
 SMTP_SERVER = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT   = int(st.secrets.get("SMTP_PORT", 587))
 SMTP_USER   = st.secrets.get("SMTP_USER")
 SMTP_PASS   = st.secrets.get("SMTP_PASS")
 RECIPS_DEF  = st.secrets.get("RECIPIENTS", "")
 
-GITHUB_PAT  = st.secrets.get("GITHUB_TOKEN")   # opciono
-REPO        = st.secrets.get("GITHUB_REPO")    # opciono
+GITHUB_PAT  = st.secrets.get("GITHUB_TOKEN")  # opciono
+REPO        = st.secrets.get("GITHUB_REPO")   # opciono
 
-# ─────────────────────────────────────────────
-#  Wialon helpers
-# ─────────────────────────────────────────────
+# ─────────────────────────  Wialon helpers
+def get_user_id(username: str) -> int | None:
+    """Vrati svoj userId da bismo filtrirali creatorId."""
+    payload = {
+        "svc": "core/search_items",
+        "params": json.dumps({
+            "spec": {
+                "itemsType": "avl_user",
+                "propName": "sys_name",
+                "propValueMask": username,
+                "sortType": "sys_name",
+            },
+            "force": 1,
+            "flags": 1,
+            "from": 0,
+            "to": 0,
+        }),
+        "sid": SID,
+    }
+    res = requests.post(API_PATH, data=payload, timeout=10).json()
+    if isinstance(res, dict) and res.get("items"):
+        return res["items"][0]["id"]
+    return None
+
+MY_UID = get_user_id(USER_NAME)
+
 @st.cache_data(ttl=900)
 def get_vehicles():
     payload = {
@@ -49,8 +66,8 @@ def get_vehicles():
         "params": json.dumps({
             "spec": {
                 "itemsType": "avl_unit",
-                "propName": "sys_name",
-                "propValueMask": "*",
+                "propName": "creatorId",
+                "propValueMask": str(MY_UID),
                 "sortType": "sys_name",
             },
             "force": 1,
@@ -61,7 +78,6 @@ def get_vehicles():
         "sid": SID,
     }
     res = requests.post(API_PATH, data=payload, timeout=15).json()
-
     if isinstance(res, dict) and res.get("error"):
         st.error(f"Wialon error {res['error']}")
         st.stop()
@@ -88,7 +104,6 @@ def list_files(vid: int, target: date):
         "sid": SID,
     }
     res = requests.post(API_PATH, data=payload, timeout=15).json()
-
     if isinstance(res, dict) and res.get("error"):
         st.error(f"Wialon error {res['error']}")
         return []
@@ -98,8 +113,7 @@ def list_files(vid: int, target: date):
         ct = datetime.fromtimestamp(f.get("ct", 0), UTC).date()
         mt = datetime.fromtimestamp(f.get("mt", 0), UTC).date()
         if ct == target or mt == target:
-            out.append(f)
-            continue
+            out.append(f); continue
         m = DATE_RE.search(f["n"])
         if m and datetime.strptime(m.group(), "%Y%m%d").date() == target:
             out.append(f)
@@ -117,10 +131,8 @@ def fetch_file(vid: int, name: str) -> bytes:
     }
     return requests.get(API_PATH, params=params, timeout=30).content
 
-# ─────────────────────────────────────────────
-#  Sidebar UI
-# ─────────────────────────────────────────────
-st.sidebar.success(f"SID: {SID[:4]}…")
+# ─────────────────────────  Sidebar UI
+st.sidebar.success(f"▶️ {USER_NAME}")
 vehicles   = get_vehicles()
 search     = st.sidebar.text_input("Pretraga")
 pick_date  = st.sidebar.date_input("Datum", value=date.today())
@@ -131,8 +143,7 @@ st.sidebar.text_area("Primaoci (zarez)", key="recips", height=80)
 
 # GitHub toggle (ignorisan ako nema PAT/REPO)
 def toggle_auto(state: bool):
-    if not (GITHUB_PAT and REPO):
-        return
+    if not (GITHUB_PAT and REPO): return
     pk = requests.get(
         f"https://api.github.com/repos/{REPO}/actions/secrets/public-key",
         headers={"Authorization": f"token {GITHUB_PAT}"},
@@ -147,26 +158,22 @@ def toggle_auto(state: bool):
 
 st.sidebar.checkbox("Aktiviraj automatiku", on_change=toggle_auto, args=(True,))
 
-# ─────────────────────────────────────────────
-#  Lista fajlova
-# ─────────────────────────────────────────────
+# ─────────────────────────  Lista fajlova
 filtered = [v for v in vehicles if search.lower() in (v["reg"] + v["name"]).lower()]
 if not filtered:
-    st.sidebar.info("Nema rezultata.")
-    st.stop()
+    st.sidebar.info("Nema rezultata."); st.stop()
 
-choice   = st.sidebar.radio("Vozilo", filtered, format_func=lambda v: f"{v['reg']} — {v['name']}")
-vid      = choice["id"]
-files    = list_files(vid, pick_date)
+choice  = st.sidebar.radio("Vozilo", filtered,
+                           format_func=lambda v: f"{v['reg']} — {v['name']}")
+vid     = choice["id"]
+files   = list_files(vid, pick_date)
 
 st.subheader(f"Fajlovi za **{choice['reg']}** – {pick_date:%d.%m.%Y} ({len(files)})")
 if not files:
-    st.info("Nema fajlova.")
-    st.stop()
+    st.info("Nema fajlova."); st.stop()
 
 if "checked" not in st.session_state:
     st.session_state.checked = {}
-
 cols = st.columns(3)
 for i, f in enumerate(files):
     key = f"chk_{f['n']}"
@@ -176,11 +183,8 @@ for i, f in enumerate(files):
 
 selected = [f["n"] for f in files if st.session_state.checked.get(f"chk_{f['n']}")]
 
-# ─────────────────────────────────────────────
-#  Akcije
-# ─────────────────────────────────────────────
+# ─────────────────────────  Akcije
 left, right = st.columns(2)
-
 with left:
     st.markdown("### 📥 Download")
     if st.button("Preuzmi ZIP", disabled=not selected):
