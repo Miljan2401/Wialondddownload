@@ -1,61 +1,49 @@
-# app.py – Wialon DDD Manager (SID‑only edition, 2025‑05‑15)
-"""
-Streamlit aplikacija koja **isključivo** radi sa SID‑om prosleđenim iz Wialon‑a.
-•  Nema login‑a preko TOKEN‑a.
-•  `baseUrl` i `sid` se čitaju iz query string‑a.
-•  Primaoci mejla su editabilni u sidebar‑u.
-•  (Opciono) GitHub automatika – ako PAT i REPO postoje u secrets‑ima, možeš je
-   paliti/gašiti. Ako ne postoje, jednostavno ignoriši toggle.
-"""
+# app.py – Wialon DDD Manager (SID-only, 2025-05-15)
 
-import io, os, json, zipfile, re, smtplib, base64, requests
+import io, json, zipfile, re, smtplib, base64, requests
 from email.message import EmailMessage
 from datetime import datetime, date
 from urllib.parse import unquote
 from dateutil import tz
 import streamlit as st
 
-# ────────────────────────────────────────────────────────────────────────────
-#  PAGE CONFIG
-# ────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  Page config
+# ─────────────────────────────────────────────
 st.set_page_config(page_title="Wialon DDD Manager", layout="wide")
+UTC      = tz.tzutc()
+DATE_RE  = re.compile(r"20\d{6}")           # YYYYMMDD u nazivu fajla
 
-UTC = tz.tzutc()
-DATE_RE = re.compile(r"20\d{6}")  # YYYYMMDD iz naziva fajla
-
-# ────────────────────────────────────────────────────────────────────────────
-#  QUERY PARAMS (obavezni: sid, baseUrl)
-# ────────────────────────────────────────────────────────────────────────────
-q = st.query_params
-SID       = q.get("sid")
-BASE_URL  = unquote(q.get("baseUrl", "https://hst-api.wialon.com"))
-USER_NAME = q.get("user", "")
+# ─────────────────────────────────────────────
+#  Query-parametri (mora sid + baseUrl)
+# ─────────────────────────────────────────────
+q          = st.query_params
+SID        = q.get("sid")
+BASE_URL   = unquote(q.get("baseUrl", "https://hst-api.wialon.com"))
+USER_NAME  = q.get("user", "")
+API_PATH   = f"{BASE_URL.rstrip('/')}/wialon/ajax.html"
 
 if not SID:
-    st.error("Aplikacija mora biti pokrenuta iz Wialon‑a sa ?sid=… u URL‑u.")
+    st.error("Pokreni aplikaciju iz Wialon-a (URL mora imati sid).")
     st.stop()
 
-API_PATH = f"{BASE_URL.rstrip('/')}/wialon/ajax.html"
-
-# ────────────────────────────────────────────────────────────────────────────
-#  SECRETS (SMTP & opcioni GitHub toggle)
-# ────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  SMTP i (opciono) GitHub toggle
+# ─────────────────────────────────────────────
 SMTP_SERVER = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT   = int(st.secrets.get("SMTP_PORT", 587))
 SMTP_USER   = st.secrets.get("SMTP_USER")
 SMTP_PASS   = st.secrets.get("SMTP_PASS")
 RECIPS_DEF  = st.secrets.get("RECIPIENTS", "")
 
-GITHUB_PAT  = st.secrets.get("GITHUB_TOKEN")  # option
-REPO        = st.secrets.get("GITHUB_REPO")   # option
+GITHUB_PAT  = st.secrets.get("GITHUB_TOKEN")   # opciono
+REPO        = st.secrets.get("GITHUB_REPO")    # opciono
 
-# ────────────────────────────────────────────────────────────────────────────
-#  WIALON HELPERS (koriste prosleđeni SID)
-# ────────────────────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────
+#  Wialon helpers
+# ─────────────────────────────────────────────
 @st.cache_data(ttl=900)
 def get_vehicles():
-    """Vrati listu vozila za prosleđeni SID ili zaustavi aplikaciju uz poruku.
-    """
     payload = {
         "svc": "core/search_items",
         "params": json.dumps({
@@ -74,30 +62,18 @@ def get_vehicles():
     }
     res = requests.post(API_PATH, data=payload, timeout=15).json()
 
-    # --- Error izlaz ---------------------------------------
     if isinstance(res, dict) and res.get("error"):
         st.error(f"Wialon error {res['error']}")
         st.stop()
 
-    items = res["items"] if isinstance(res, dict) and "items" in res else res
-
-    vehicles = []
-    for itm in items:
-        vehicles.append({
+    items = res["items"] if isinstance(res, dict) else res
+    return [
+        {
             "id": itm.get("id"),
             "name": itm.get("nm", "Unknown"),
             "reg": itm.get("prp", {}).get("reg_number", ""),
-        })
-    return vehicles
-
-# ────────────────────────────────────────────────────────────────────────────
-
-        {
-            "id": it["id"],
-            "name": it.get("nm", "Unknown"),
-            "reg": it.get("prp", {}).get("reg_number", ""),
         }
-        for it in res
+        for itm in items
     ]
 
 def list_files(vid: int, target: date):
@@ -112,20 +88,24 @@ def list_files(vid: int, target: date):
         "sid": SID,
     }
     res = requests.post(API_PATH, data=payload, timeout=15).json()
+
     if isinstance(res, dict) and res.get("error"):
-        st.error(f"Wialon error {res['error']}"); return []
+        st.error(f"Wialon error {res['error']}")
+        return []
+
     out = []
     for f in res:
         ct = datetime.fromtimestamp(f.get("ct", 0), UTC).date()
         mt = datetime.fromtimestamp(f.get("mt", 0), UTC).date()
         if ct == target or mt == target:
-            out.append(f); continue
+            out.append(f)
+            continue
         m = DATE_RE.search(f["n"])
         if m and datetime.strptime(m.group(), "%Y%m%d").date() == target:
             out.append(f)
     return sorted(out, key=lambda x: x.get("mt", x.get("ct", 0)), reverse=True)
 
-def fetch_file(vid: int, name: str):
+def fetch_file(vid: int, name: str) -> bytes:
     params = {
         "svc": "file/get",
         "params": json.dumps({
@@ -137,10 +117,10 @@ def fetch_file(vid: int, name: str):
     }
     return requests.get(API_PATH, params=params, timeout=30).content
 
-# ────────────────────────────────────────────────────────────────────────────
-#  SIDEBAR UI
-# ────────────────────────────────────────────────────────────────────────────
-st.sidebar.success(f"Prijavljen SID: {SID[:4]}…")
+# ─────────────────────────────────────────────
+#  Sidebar UI
+# ─────────────────────────────────────────────
+st.sidebar.success(f"SID: {SID[:4]}…")
 vehicles   = get_vehicles()
 search     = st.sidebar.text_input("Pretraga")
 pick_date  = st.sidebar.date_input("Datum", value=date.today())
@@ -149,37 +129,56 @@ if "recips" not in st.session_state:
     st.session_state.recips = RECIPS_DEF
 st.sidebar.text_area("Primaoci (zarez)", key="recips", height=80)
 
-# (opciono) GitHub toggle
-
+# GitHub toggle (ignorisan ako nema PAT/REPO)
 def toggle_auto(state: bool):
-    if not (GITHUB_PAT and REPO): return
-    pk = requests.get(f"https://api.github.com/repos/{REPO}/actions/secrets/public-key", headers={"Authorization":f"token {GITHUB_PAT}"}).json()
-    enc = base64.b64encode(bytes(a^b for a,b in zip(b"true" if state else b"false", base64.b64decode(pk["key"])))).decode()
-    requests.put(f"https://api.github.com/repos/{REPO}/actions/secrets/AUTO_ON", json={"encrypted_value":enc, "key_id":pk["key_id"]}, headers={"Authorization":f"token {GITHUB_PAT}"})
+    if not (GITHUB_PAT and REPO):
+        return
+    pk = requests.get(
+        f"https://api.github.com/repos/{REPO}/actions/secrets/public-key",
+        headers={"Authorization": f"token {GITHUB_PAT}"},
+    ).json()
+    raw = b"true" if state else b"false"
+    enc = base64.b64encode(bytes(a ^ b for a, b in zip(raw, base64.b64decode(pk["key"])))).decode()
+    requests.put(
+        f"https://api.github.com/repos/{REPO}/actions/secrets/AUTO_ON",
+        json={"encrypted_value": enc, "key_id": pk["key_id"]},
+        headers={"Authorization": f"token {GITHUB_PAT}"},
+    )
 
 st.sidebar.checkbox("Aktiviraj automatiku", on_change=toggle_auto, args=(True,))
 
-# ────────────────────────────────────────────────────────────────────────────
-#  LISTA FAJLOVA
-# ────────────────────────────────────────────────────────────────────────────
-filtered = [v for v in vehicles if search.lower() in (v["reg"]+v["name"]).lower()]
-if not filtered: st.sidebar.info("Nema rezultata."); st.stop()
-choice = st.sidebar.radio("Vozilo", filtered, format_func=lambda v:f"{v['reg']} — {v['name']}")
-vid = choice["id"]
-files = list_files(vid, pick_date)
+# ─────────────────────────────────────────────
+#  Lista fajlova
+# ─────────────────────────────────────────────
+filtered = [v for v in vehicles if search.lower() in (v["reg"] + v["name"]).lower()]
+if not filtered:
+    st.sidebar.info("Nema rezultata.")
+    st.stop()
+
+choice   = st.sidebar.radio("Vozilo", filtered, format_func=lambda v: f"{v['reg']} — {v['name']}")
+vid      = choice["id"]
+files    = list_files(vid, pick_date)
 
 st.subheader(f"Fajlovi za **{choice['reg']}** – {pick_date:%d.%m.%Y} ({len(files)})")
-if not files: st.info("Nema fajlova."); st.stop()
+if not files:
+    st.info("Nema fajlova.")
+    st.stop()
 
-if "checked" not in st.session_state: st.session_state.checked={}
-cols=st.columns(3)
-for i,f in enumerate(files):
-    key=f"chk_{f['n']}"; st.session_state.checked[key]=cols[i%3].checkbox(f["n"], st.session_state.checked.get(key, False), key=key)
-selected=[f["n"] for f in files if st.session_state.checked.get(f"chk_{f['n']}")]
+if "checked" not in st.session_state:
+    st.session_state.checked = {}
 
-# ────────────────────────────────────────────────────────────────────────────
-#  AKCIJE
-# ────────────────────────────────────────────────────────────────────────────
+cols = st.columns(3)
+for i, f in enumerate(files):
+    key = f"chk_{f['n']}"
+    st.session_state.checked[key] = cols[i % 3].checkbox(
+        f["n"], st.session_state.checked.get(key, False), key=key
+    )
+
+selected = [f["n"] for f in files if st.session_state.checked.get(f"chk_{f['n']}")]
+
+# ─────────────────────────────────────────────
+#  Akcije
+# ─────────────────────────────────────────────
 left, right = st.columns(2)
 
 with left:
@@ -190,7 +189,7 @@ with left:
             for fn in selected:
                 zf.writestr(fn, fetch_file(vid, fn))
         st.download_button(
-            label="Klikni za download",
+            "Klikni za download",
             data=mem.getvalue(),
             mime="application/zip",
             file_name=f"{choice['reg']}_{pick_date}.zip",
@@ -207,8 +206,8 @@ with right:
                     zf.writestr(fn, fetch_file(vid, fn))
             msg = EmailMessage()
             msg["Subject"] = f"DDD fajlovi {choice['reg']} {pick_date:%d.%m.%Y}"
-            msg["From"] = SMTP_USER
-            msg["To"] = st.session_state.recips
+            msg["From"]    = SMTP_USER
+            msg["To"]      = st.session_state.recips
             msg.set_content("Export iz Streamlit aplikacije")
             msg.add_attachment(
                 buf.getvalue(),
