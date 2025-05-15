@@ -104,12 +104,32 @@ elif st.sidebar.button("🔑 Admin login"):
 # ─────────── admin panel
 if is_admin:
     st.sidebar.header("⚙️ Admin automatika")
-    token  = st.sidebar.text_input("Wialon token",value=user_cfg["token"],type="password")
-    recip  = st.sidebar.text_area("Primaoci",value=user_cfg["recipients"],height=60)
-    enabled= st.sidebar.checkbox("Enabled",value=user_cfg["enabled"])
+
+    token = st.sidebar.text_input(
+        "Wialon token",
+        value=(user_cfg.get("token") or ""),     # uvek string
+        type="password",
+    )
+
+    recip = st.sidebar.text_area(
+        "Primaoci (zarez)",
+        value=(user_cfg.get("recipients") or ""),  # uvek string
+        height=60,
+    )
+
+    enabled = st.sidebar.checkbox(
+        "Enabled",
+        value=user_cfg.get("enabled", False),
+    )
+
     if st.sidebar.button("💾 Snimi"):
-        db[str(MY_UID)]={"token":token.strip(),"recipients":recip.strip(),"enabled":enabled}
-        save_db(db); st.sidebar.success("Snimljeno!")
+        db[str(MY_UID)] = {
+            "token": token.strip(),
+            "recipients": recip.strip(),
+            "enabled": enabled,
+        }
+        save_db(db)
+        st.sidebar.success("Snimljeno!")
 
 # ─────────── lista + akcije
 units=get_units()
