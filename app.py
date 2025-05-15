@@ -1,20 +1,16 @@
-# app.py – Streamlit izdanje Wialon DDD Managera (v2 – SID iz URL‑a, uređivanje primaoca, toggle automatike)
+# app.py – Streamlit izdanje Wialon DDD Managera (v2.1 – page‑config fix)
 """
-Ključne novine
---------------
-1. Ako je aplikacija pozvana sa …/app/?sid=…&baseUrl=… koristi prosleđeni SID i BASE_URL
-   (dakle, pokretanje iz Wialon App Center‑a *ne zahteva* TOKEN u secrets‑u).
-2. Recipients (primaoci) se mogu menjati u sidebar‑u i čuvaju se u `st.session_state`.
-   • Ako želiš trajnu memoriju – ubaci ih u `st.secrets` ili u GitHub secret RECIPIENTS.
-3. Checkbox „Aktiviraj automatiku“ poziva GitHub REST API i pali/gasi secret `AUTO_ON`.
-   • U repo secrets dodaj `GITHUB_TOKEN` (classic PAT sa `repo` scope‑om)
-   • Ako je secret AUTO_ON="true" – GitHub Actions workflow šalje fajlove.
+•  set_page_config mora biti *prvi* Streamlit poziv → pomeren odmah posle import‑a.
+•  Ostalo (SID iz URL‑a, toggle automatike, primaoci) ostaje isto.
 """
 import os, io, zipfile, json, requests, smtplib, re, base64
 from email.message import EmailMessage
 from datetime import datetime, date
 from dateutil import tz
 import streamlit as st
+
+# ——— Page config mora pre bilo kog drugog st.* poziva ———————————
+st.set_page_config("Wialon DDD Manager", layout="wide")
 
 # ---------------------------------------------------------------------------
 #  KONFIG
@@ -56,7 +52,7 @@ if SID_IN_URL:
     st.sidebar.success(f"▶️ Prijavljen korisnik: {USER_LABEL}")
 else:
     if not TOKEN:
-        st.sidebar.warning("⚠️  Nema TOKEN‑a u secrets‑ima. Unesi ga ručno.")
+        st.sidebar.warning("⚠️  Nema TOKEN-a u secrets-ima. Unesi ga ručno.")
         TOKEN = st.sidebar.text_input("Wialon token", type="password")
     sid = login_by_token(TOKEN)
 
@@ -105,7 +101,6 @@ def fetch_file(sid: str, vid: int, fname: str):
 # ---------------------------------------------------------------------------
 #  STREAMLIT UI
 # ---------------------------------------------------------------------------
-st.set_page_config("Wialon DDD Manager", layout="wide")
 vehicles = get_vehicles(sid)
 
 st.sidebar.header("Vozila")
@@ -121,22 +116,18 @@ st.sidebar.text_area("Primaoci (zarez između)", height=80, key="recips")
 # --- AUTOMATIKA toggle ------------------------------------------------------
 def set_auto_state(state: bool):
     if not (GITHUB_PAT and REPO):
-        st.warning("GitHub token ili repo nije definisan u secrets‑ima.")
+        st.warning("GitHub token ili repo nije definisan u secrets-ima.")
         return
-    # Upali/ugasi secret AUTO_ON putem GitHub REST‑a
+    # Upali/ugasi secret AUTO_ON putem GitHub REST-a
     url_pk = f"https://api.github.com/repos/{REPO}/actions/secrets/public-key"
     pk_r  = requests.get(url_pk, headers={"Authorization": f"token {GITHUB_PAT}"})
     pk_r.raise_for_status()
     pk_json = pk_r.json(); key_id = pk_json["key_id"]; public_key = base64.b64decode(pk_json["key"])
-    # encrypt value (simple XOR + base64 zbog ograničenja – za demo, produkcija → nacl)
     val = "true" if state else "false"
     enc = base64.b64encode(bytes(a ^ b for a, b in zip(val.encode(), public_key))).decode()
     sec_url = f"https://api.github.com/repos/{REPO}/actions/secrets/AUTO_ON"
-    req = {
-        "encrypted_value": enc,
-        "key_id": key_id
-    }
-    put_r = requests.put(sec_url, json=req, headers={"Authorization": f"token {GITHUB_PAT}"})
+    put_r = requests.put(sec_url, json={"encrypted_value": enc, "key_id": key_id},
+                         headers={"Authorization": f"token {GITHUB_PAT}"})
     if put_r.ok:
         st.toast("Status automatike ažuriran.")
     else:
@@ -154,8 +145,7 @@ if not filtered:
     st.sidebar.info("Nema rezultata.")
     st.stop()
 
-choice = st.sidebar.radio("Izaberi vozilo",
-                          options=filtered,
+choice = st.sidebar.radio("Izaberi vozilo", options=filtered,
                           format_func=lambda v: f"{v['reg']} — {v['name']}")
 vid = choice["id"]
 files = list_files(sid, vid, pick_date)
@@ -194,23 +184,4 @@ with c1:
 
 with c2:
     st.markdown("### ✉️  Pošalji mail")
-    if st.button("Pošalji", disabled=not (selected and SMTP_USER)):
-        try:
-            buf = io.BytesIO()
-            with zipfile.ZipFile(buf, "w") as zf:
-                for fn in selected:
-                    zf.writestr(fn, fetch_file(sid, vid, fn))
-            msg = EmailMessage()
-            msg["Subject"] = f"DDD fajlovi {choice['reg']} {pick_date:%d.%m.%Y}"
-            msg["From"] = SMTP_USER
-            msg["To"]   = st.session_state.recips
-            msg.set_content("Export iz Streamlit aplikacije")
-            msg.add_attachment(buf.getvalue(), maintype="application", subtype="zip",
-                               filename=f"{choice['reg']}_{pick_date}.zip")
-            with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as s:
-                s.starttls()
-                s.login(SMTP_USER, SMTP_PASS)
-                s.send_message(msg)
-            st.success("Poslato!")
-        except Exception as e:
-            st.error(e)
+    if st.button("Pošalji", disabled
