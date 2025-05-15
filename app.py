@@ -11,27 +11,26 @@ import streamlit as st
 # ─────────── META ───────────
 st.set_page_config("Wialon DDD Manager", layout="wide")
 UTC, DATE_RE = tz.tzutc(), re.compile(r"20\d{6}")
-DATA_FILE = Path("users.json")            # lokalna “baza” tokena
+DATA_FILE = Path("users.json")             # lokalni “storage” tokena
 
 # ─────────── URL parametri ───────────
 q          = st.query_params
 SID        = q.get("sid")
 BASE_URL   = unquote(q.get("baseUrl", "https://hst-api.wialon.com"))
 USER_NAME  = q.get("user", "")
-ADMIN_FLAG = q.get("admin")               # ?admin=PIN
+ADMIN_FLAG = q.get("admin")
 API_PATH   = f"{BASE_URL.rstrip('/')}/wialon/ajax.html"
-
 if not SID:
-    st.stop("Pokreni aplikaciju iz Wialon-a (sid= nedostaje).")
+    st.stop("Pokreni aplikaciju iz Wialon-a (nedostaje sid=).")
 
 # ─────────── Secrets ───────────
 SMTP_SERVER = st.secrets.get("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT   = int(st.secrets.get("SMTP_PORT", 587))
 SMTP_USER   = st.secrets.get("SMTP_USER")
 SMTP_PASS   = st.secrets.get("SMTP_PASS")
-ADMIN_PIN   = st.secrets.get("ADMIN_PIN", "12345")     # ← postavi svoj PIN!
+ADMIN_PIN   = st.secrets.get("ADMIN_PIN", "12345")   # promeni po želji
 
-# ─────────── Helperi za bazu ───────────
+# ─────────── Helperi za JSON bazu ───────────
 def load_db() -> dict:
     return json.loads(DATA_FILE.read_text()) if DATA_FILE.exists() else {}
 
@@ -43,12 +42,8 @@ def get_user_id(name: str) -> int | None:
     payload = {
         "svc": "core/search_items",
         "params": json.dumps({
-            "spec": {
-                "itemsType": "avl_user",
-                "propName": "sys_name",
-                "propValueMask": name,
-                "sortType": "sys_name",
-            },
+            "spec": {"itemsType": "avl_user", "propName": "sys_name",
+                     "propValueMask": name, "sortType": "sys_name"},
             "force": 1, "flags": 1, "from": 0, "to": 0,
         }),
         "sid": SID,
@@ -58,50 +53,34 @@ def get_user_id(name: str) -> int | None:
 
 MY_UID = get_user_id(USER_NAME)
 
-# ─────────── Popis vozila (za ručno preuzimanje) ───────────
+# ─────────── Popis vozila (ručno preuzimanje) ───────────
 @st.cache_data(ttl=600)
 def get_units():
     payload = {
         "svc": "core/search_items",
         "params": json.dumps({
-            "spec": {
-                "itemsType": "avl_unit",
-                "propName": "sys_name",
-                "propValueMask": "*",
-                "sortType": "sys_name",
-            },
+            "spec": {"itemsType": "avl_unit", "propName": "sys_name",
+                     "propValueMask": "*", "sortType": "sys_name"},
             "force": 1, "flags": 1, "from": 0, "to": 0,
         }),
         "sid": SID,
     }
     r = requests.post(API_PATH, data=payload, timeout=15).json()
     items = r["items"] if isinstance(r, dict) else r
-    return [
-        {
-            "id": u["id"],
-            "name": u.get("nm", "Unknown"),
-            "reg": u.get("prp", {}).get("reg_number", ""),
-        }
-        for u in items
-    ]
+    return [{"id": u["id"], "name": u.get("nm", "Unknown"),
+             "reg": u.get("prp", {}).get("reg_number", "")} for u in items]
 
 def list_files(vid: int, target: date):
     payload = {
         "svc": "file/list",
         "params": json.dumps({
-            "itemId": vid,
-            "storageType": 2,
-            "path": "tachograph/",
-            "mask": "*",
-            "recursive": False,
-            "fullPath": False,
-        }),
+            "itemId": vid, "storageType": 2, "path": "tachograph/",
+            "mask": "*", "recursive": False, "fullPath": False}),
         "sid": SID,
     }
     d = requests.post(API_PATH, data=payload, timeout=15).json()
-
     if isinstance(d, dict) and d.get("error"):
-        if d["error"] == 4:       # folder ne postoji
+        if d["error"] == 4:          # folder ne postoji
             return []
         st.error(f"Wialon error {d['error']}")
         return []
@@ -118,26 +97,15 @@ def list_files(vid: int, target: date):
     return sorted(out, key=lambda x: x.get("mt", x.get("ct", 0)), reverse=True)
 
 def fetch_file(vid: int, name: str) -> bytes:
-    p = {
-        "svc": "file/get",
-        "params": json.dumps({
-            "itemId": vid,
-            "storageType": 2,
-            "path": f"tachograph/{name}",
-        }),
-        "sid": SID,
-    }
+    p = {"svc": "file/get",
+         "params": json.dumps({"itemId": vid, "storageType": 2,
+                               "path": f"tachograph/{name}"}), "sid": SID}
     return requests.get(API_PATH, params=p, timeout=30).content
 
-# ─────────── Učitaj / normalizuj user-konfig ───────────
+# ─────────── Učitaj user-konfig + normalizuj string ───────────
 db = load_db()
 user_cfg = db.get(str(MY_UID), {"token": "", "recipients": "", "enabled": False})
-
-# garantuj da je recipients string
-if isinstance(user_cfg.get("recipients"), list):
-    user_cfg["recipients"] = ", ".join(user_cfg["recipients"])
-else:
-    user_cfg["recipients"] = str(user_cfg.get("recipients") or "")
+user_cfg["recipients"] = str(user_cfg.get("recipients") or "")
 
 # ─────────── Admin autentikacija (PIN u session_state) ───────────
 if "admin_ok" not in st.session_state:
@@ -154,7 +122,7 @@ if not st.session_state.admin_ok:
 
 is_admin = st.session_state.admin_ok
 
-# ─────────── Sidebar: status + (ako admin) forma ───────────
+# ─────────── Sidebar status + admin panel ───────────
 st.sidebar.success(f"▶️ {USER_NAME}")
 st.sidebar.write(f"UserID: `{MY_UID}`")
 st.sidebar.write("**Automatika:** " +
@@ -165,13 +133,13 @@ if is_admin:
 
     token = st.sidebar.text_input(
         "Wialon token",
-        value=(user_cfg.get("token") or ""),
+        value=str(user_cfg.get("token") or ""),
         type="password",
     )
 
     recip_val = st.sidebar.text_area(
         "Primaoci (zarez)",
-        value=user_cfg["recipients"],
+        value=str(user_cfg["recipients"]),
         height=60,
     )
 
@@ -192,7 +160,7 @@ if is_admin:
 else:
     st.sidebar.text_area(
         "Primaoci",
-        value=user_cfg["recipients"],
+        value=str(user_cfg["recipients"]),
         height=60,
         disabled=True,
     )
