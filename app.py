@@ -184,4 +184,4 @@ with c1:
 
 with c2:
     st.markdown("### ✉️  Pošalji mail")
-    if st.button("Pošalji", disabled)
+    if st.button("Pošalji", "disabled")
