@@ -82,24 +82,37 @@ def get_vehicles():
              "name":u.get("nm","Unknown"),
              "reg":u.get("prp",{}).get("reg_number","")} for u in units]
 
-def list_files(vid:int, target:date):
-    payload = {"svc":"file/list",
-               "params":json.dumps({"itemId":vid,"storageType":2,
-                                    "path":"tachograph/","recursive":False}),
-               "sid":SID}
+def list_files(vid: int, target: date):
+    payload = {
+        "svc": "file/list",
+        "params": json.dumps({
+            "itemId": vid,
+            "storageType": 2,
+            "path": "tachograph/",
+            "recursive": False,
+        }),
+        "sid": SID,
+    }
     res = requests.post(API_PATH, data=payload, timeout=15).json()
-    if isinstance(res, dict) and res.get("error"):
-        st.error(f"Wialon error {res['error']}"); return []
 
-    out=[]
+    # --- graceful handling -----------------------------
+    if isinstance(res, dict) and res.get("error"):
+        if res["error"] == 4:          # folder ne postoji → nema fajlova
+            return []
+        st.error(f"Wialon error {res['error']}")
+        return []
+
+    out = []
     for f in res:
-        ct=datetime.fromtimestamp(f.get("ct",0),UTC).date()
-        mt=datetime.fromtimestamp(f.get("mt",0),UTC).date()
-        if ct==target or mt==target: out.append(f); continue
-        m=DATE_RE.search(f["n"])
-        if m and datetime.strptime(m.group(),"%Y%m%d").date()==target:
+        ct = datetime.fromtimestamp(f.get("ct", 0), UTC).date()
+        mt = datetime.fromtimestamp(f.get("mt", 0), UTC).date()
+        if ct == target or mt == target:
+            out.append(f); continue
+        m = DATE_RE.search(f["n"])
+        if m and datetime.strptime(m.group(), "%Y%m%d").date() == target:
             out.append(f)
-    return sorted(out, key=lambda x:x.get("mt",x.get("ct",0)), reverse=True)
+    return sorted(out, key=lambda x: x.get("mt", x.get("ct", 0)), reverse=True)
+
 
 def fetch_file(vid:int,name:str)->bytes:
     p={"svc":"file/get",
