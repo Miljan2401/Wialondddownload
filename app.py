@@ -162,23 +162,46 @@ selected=[f["n"] for f in files if st.session_state.checked.get(f"chk_{f['n']}")
 # ────────────────────────────────────────────────────────────────────────────
 #  AKCIJE
 # ────────────────────────────────────────────────────────────────────────────
-left,right = st.columns(2)
+left, right = st.columns(2)
+
 with left:
     st.markdown("### 📥 Download")
     if st.button("Preuzmi ZIP", disabled=not selected):
-        mem=io.BytesIO();
-        with zipfile.ZipFile(mem,"w") as zf:
-            for fn in selected: zf.writestr(fn, fetch_file(vid, fn))
-        st.download_button("Klikni za download", mem.getvalue(), "application/zip", f"{choice['reg']}_{pick_date}.zip", use_container_width=True)
+        mem = io.BytesIO()
+        with zipfile.ZipFile(mem, "w") as zf:
+            for fn in selected:
+                zf.writestr(fn, fetch_file(vid, fn))
+        st.download_button(
+            label="Klikni za download",
+            data=mem.getvalue(),
+            mime="application/zip",
+            file_name=f"{choice['reg']}_{pick_date}.zip",
+            use_container_width=True,
+        )
+
 with right:
     st.markdown("### ✉️ Pošalji mail")
-    if st.button("Pošalji", disabled=not(selected and SMTP_USER)):
+    if st.button("Pošalji", disabled=not (selected and SMTP_USER)):
         try:
-            buf=io.BytesIO();
-            with zipfile.ZipFile(buf,"w") as zf:
-                for fn in selected: zf.writestr(fn, fetch_file(vid, fn))
-            msg=EmailMessage(); msg["Subject"]=f"DDD fajlovi {choice['reg']} {pick_date:%d.%m.%Y}"; msg["From"]=SMTP_USER; msg["To"]=st.session_state.recips
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w") as zf:
+                for fn in selected:
+                    zf.writestr(fn, fetch_file(vid, fn))
+            msg = EmailMessage()
+            msg["Subject"] = f"DDD fajlovi {choice['reg']} {pick_date:%d.%m.%Y}"
+            msg["From"] = SMTP_USER
+            msg["To"] = st.session_state.recips
             msg.set_content("Export iz Streamlit aplikacije")
-            msg.add_attachment(buf.getvalue(), maintype="application", subtype="zip", filename=f"{choice['reg']}_{pick_date}.zip")
+            msg.add_attachment(
+                buf.getvalue(),
+                maintype="application",
+                subtype="zip",
+                filename=f"{choice['reg']}_{pick_date}.zip",
+            )
             with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as s:
-                s.starttls(); s.login(SMTP
+                s.starttls()
+                s.login(SMTP_USER, SMTP_PASS)
+                s.send_message(msg)
+            st.success("Poslato!")
+        except Exception as e:
+            st.error(e)
