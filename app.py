@@ -1,6 +1,6 @@
-# app.py – Wialon DDD Manager (v2.4 – sve string zagrade ispravne, fajl testiran bez SyntaxError-a)
-"""Streamlit aplikacija kojoj se može proslediti SID iz Wialon-a ili koristiti TOKEN.
-U sidebar-u se dodaju primaoci i pali/gasi GitHub automatika.
+# app.py – Wialon DDD Manager (v2.4 – sve string zagrade ispravne, fajl testiran bez SyntaxError‑a)
+"""Streamlit aplikacija kojoj se može proslediti SID iz Wialon‑a ili koristiti TOKEN.
+U sidebar‑u se dodaju primaoci i pali/gasi GitHub automatika.
 """
 
 import os, io, zipfile, json, requests, smtplib, re, base64
@@ -9,15 +9,15 @@ from datetime import datetime, date
 from dateutil import tz
 import streamlit as st
 
-# 1️⃣ Page-config mora prvi
+# 1️⃣ Page‑config mora prvi
 st.set_page_config(page_title="Wialon DDD Manager", layout="wide")
 
 # 2️⃣ Konstante
 UTC = tz.tzutc()
 DATE_RE = re.compile(r"20\d{6}")
 
-# 3️⃣ Parametri iz URL-a (za App Center)
-q = st.experimental_get_query_params()
+# 3️⃣ Parametri iz URL‑a (za App Center)
+q = st.query_params
 SID_IN_URL = q.get("sid", [None])[0]
 BASE_URL   = q.get("baseUrl", ["https://hst-api.wialon.com"])[0]
 USER_LABEL = q.get("user", [""])[0]
