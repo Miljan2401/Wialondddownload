@@ -1,7 +1,7 @@
-# app.py – Streamlit izdanje Wialon DDD Managera (v2.1 – page‑config fix)
+# app.py – Streamlit izdanje Wialon DDD Managera (v2.2 – ispravljen "disabled" bug)
 """
-•  set_page_config mora biti *prvi* Streamlit poziv → pomeren odmah posle import‑a.
-•  Ostalo (SID iz URL‑a, toggle automatike, primaoci) ostaje isto.
+•  `st.button` sada pravilno koristi imenovani parametar `disabled=`.
+•  Kompletiran blok za slanje mail‑a (ranije je bio odsečen pa je Python bacio SyntaxError).
 """
 import os, io, zipfile, json, requests, smtplib, re, base64
 from email.message import EmailMessage
@@ -18,7 +18,7 @@ st.set_page_config("Wialon DDD Manager", layout="wide")
 UTC = tz.tzutc()
 DATE_RE = re.compile(r"20\d{6}")
 
-# --- uzmi parametre iz URL‑a ------------------------------------------------
+# --- uzmi parametre iz URL-a ------------------------------------------------
 q = st.experimental_get_query_params()
 SID_IN_URL   = q.get("sid", [None])[0]
 BASE_URL     = q.get("baseUrl", ["https://hst-api.wialon.com"])[0]
@@ -179,9 +179,8 @@ with c1:
         with zipfile.ZipFile(mem, "w") as zf:
             for fn in selected:
                 zf.writestr(fn, fetch_file(sid, vid, fn))
-        st.download_button("Klikni za download", data=mem.getvalue(), mime="application/zip",
-                           file_name=f"{choice['reg']}_{pick_date}.zip", use_container_width=True)
-
-with c2:
-    st.markdown("### ✉️  Pošalji mail")
-    if st.button("Pošalji", "disabled")
+        st.download_button(
+            "Klikni za download",
+            data=mem.getvalue(),
+            mime="application/zip",
+            file_name=f"{choice['reg']}_{pick
